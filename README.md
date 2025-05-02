@@ -78,7 +78,8 @@ Run the built binary:
 ## Roadmap
 
 - [ ] Flesh out chat client and AI endpoints.
-- [ ] mouse support
+- [x] mouse support
+- [ ] mouse support in chat terminal 
 - [ ] more complex vim bindings.
 - [ ] parallax or some sort of cool backgrounds.
 

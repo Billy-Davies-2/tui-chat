@@ -219,6 +219,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastKey = s
 			return m, nil
 		}
+	case tea.MouseMsg:
+		// Only handle left-clicks when the sidebar is open.
+		if m.showSidebar && msg.Type == tea.MouseLeft {
+			// Sidebar is rendered at X=0..15 (inner width 16) with 1px padding,
+			// so tabs’ titles start at X=1, rows start at Y=1.
+			const sidebarWidth = 16
+			const padX = 1
+			const padY = 1
+
+			// Is the click inside the sidebar box?
+			if msg.X >= 0 && msg.X < sidebarWidth+padX*2 && msg.Y >= padY {
+				// Compute which tab row was clicked
+				tabIndex := msg.Y - padY
+				if tabIndex >= 0 && tabIndex < len(m.tabs) {
+					// Build the rendered line to find where “[x]” sits
+					line := fmt.Sprintf("> %s [x]", m.tabs[tabIndex].title)
+					// The text inside the box starts at X=padX
+					// So “>” is at padX, title runs to padX+len("> ")+len(title)-1,
+					// “ [x]” starts at padX + len(line)-3
+					closeX := padX + len(line) - 3
+
+					if msg.X >= closeX {
+						// Click on the “x” → close
+						m.tabs = append(m.tabs[:tabIndex], m.tabs[tabIndex+1:]...)
+						if m.currentTab >= len(m.tabs) && m.currentTab > 0 {
+							m.currentTab = len(m.tabs) - 1
+						}
+					} else {
+						// Click on the title → select
+						m.currentTab = tabIndex
+					}
+				}
+			}
+		}
+		return m, nil
 
 	case pasteTickMsg:
 		if len(m.pasteQueue) > 0 {
