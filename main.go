@@ -406,6 +406,9 @@ func main() {
 	log.SetOutput(f)
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
+	// seed the in-memory clipboard from the OS
+	clipboard.Init()
+
 	p := tea.NewProgram(
 		initialModel(),
 		tea.WithAltScreen(),

@@ -2,53 +2,46 @@
 package clipboard
 
 import (
-	"bytes"
-	"fmt"
-	"os/exec"
-	"runtime"
+	"log"
+	"sync"
+
+	xclip "golang.design/x/clipboard"
 )
 
-// ReadAll returns the current clipboard contents by shelling out
-// to the native OS clipboard commands.
-func ReadAll() (string, error) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("pbpaste")
-	case "linux":
-		// Prefer Wayland’s wl-paste, fall back to xclip
-		if _, err := exec.LookPath("wl-paste"); err == nil {
-			cmd = exec.Command("wl-paste")
-		} else {
-			cmd = exec.Command("xclip", "-selection", "clipboard", "-o")
-		}
-	case "windows":
-		cmd = exec.Command("powershell", "-nologo", "-noprofile", "-command", "Get-Clipboard")
-	default:
-		return "", fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+var (
+	mu    sync.RWMutex
+	store string
+)
+
+// Init pulls in the OS clipboard exactly once.
+// Call this at startup to seed your in-memory buffer.
+func Init() {
+	// initialize the x/clipboard driver
+	if err := xclip.Init(); err != nil {
+		log.Printf("clipboard: x/clipboard.Init failed: %v", err)
+		return
 	}
-	out, err := cmd.Output()
-	return string(out), err
+	// read whatever text is on the OS clipboard now
+	if data := xclip.Read(xclip.FmtText); data != nil {
+		mu.Lock()
+		store = string(data)
+		mu.Unlock()
+		log.Printf("clipboard: seeded buffer from OS clipboard: %q", store)
+	}
 }
 
-// WriteAll sets the clipboard to the given text.
+// ReadAll returns the current clipboard buffer (seeded, yanked, whatever).
+func ReadAll() (string, error) {
+	mu.RLock()
+	defer mu.RUnlock()
+	return store, nil
+}
+
+// WriteAll replaces the clipboard buffer with the given text (e.g. in your 'yy' yank).
 func WriteAll(text string) error {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("pbcopy")
-	case "linux":
-		// Prefer wl-copy, fall back to xclip
-		if _, err := exec.LookPath("wl-copy"); err == nil {
-			cmd = exec.Command("wl-copy")
-		} else {
-			cmd = exec.Command("xclip", "-selection", "clipboard")
-		}
-	case "windows":
-		cmd = exec.Command("powershell", "-nologo", "-noprofile", "-command", "Set-Clipboard")
-	default:
-		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
-	}
-	cmd.Stdin = bytes.NewBufferString(text)
-	return cmd.Run()
+	mu.Lock()
+	store = text
+	mu.Unlock()
+	log.Printf("clipboard: in-mem buffer updated to: %q", text)
+	return nil
 }
