@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -257,8 +258,142 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// wrapText splits text into lines no longer than maxWidth.
+// When a line is wrapped, subsequent lines get prefixed with indent.
+func wrapText(text string, maxWidth int, indent string) string {
+	if maxWidth <= 0 {
+		return text
+	}
+	var result []string
+	// first, split on existing newlines
+	for _, line := range strings.Split(text, "\n") {
+		if len(line) <= maxWidth {
+			result = append(result, line)
+			continue
+		}
+		// wrap long lines
+		for len(line) > 0 {
+			if len(line) <= maxWidth {
+				result = append(result, line)
+				break
+			}
+			// find last space within maxWidth
+			cut := maxWidth
+			for cut > 0 && line[cut-1] != ' ' {
+				cut--
+			}
+			if cut == 0 {
+				// no space found, hard cut
+				cut = maxWidth
+			}
+			result = append(result, line[:cut])
+			// indent the remainder
+			line = indent + strings.TrimLeft(line[cut:], " ")
+		}
+	}
+	return strings.Join(result, "\n")
+}
+
 func (m model) View() string {
-	// … same View() as before …
+	// Sidebar
+	sb := ""
+	if m.showSidebar {
+		lines := []string{}
+		for i, t := range m.tabs {
+			marker := " "
+			if i == m.currentTab {
+				marker = ">"
+			}
+			line := fmt.Sprintf("%s %s [x]", marker, t.title)
+			lines = append(lines, lipgloss.NewStyle().
+				BorderBottom(true).
+				BorderForeground(lipgloss.Color("#00FF00")).
+				Render(line))
+		}
+		// horizontal rule under tabs
+		horizontalLine := strings.Repeat("─", 12)
+		lines = append(lines, lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FF00")).
+			Render(horizontalLine))
+
+		sb = lipgloss.NewStyle().
+			Width(16).
+			Padding(1).
+			Background(lipgloss.Color("#000")).
+			Foreground(lipgloss.Color("#0f0")).
+			Render(strings.Join(lines, "\n"))
+	}
+
+	// Chat panel styling
+	border := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#0f0")).
+		Padding(1, 2).
+		Background(lipgloss.Color("#000"))
+
+	text := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#0f0")).
+		Background(lipgloss.Color("#000"))
+
+	curtab := m.tabs[m.currentTab]
+
+	// Compute dimensions
+	head := 2
+	height := m.height - head - 2
+	width := m.width
+	if m.showSidebar {
+		width -= 16 + 2
+	}
+
+	innerWidth := width - 4
+	innerWidth = max(innerWidth, 10)
+	contentStyle := text.Width(innerWidth).Align(lipgloss.Left)
+
+	// Build chat lines
+	chatLines := []string{}
+	for _, msg := range curtab.messages {
+		msgWidth := innerWidth - 5
+		msgWidth = max(msgWidth, 5)
+		wrapped := wrapText(msg, msgWidth, "  ")
+		for _, wl := range strings.Split(wrapped, "\n") {
+			chatLines = append(chatLines, contentStyle.Render(wl))
+		}
+	}
+
+	// Thinking animation
+	if curtab.thinking {
+		dots := strings.Repeat(".", curtab.dots)
+		chatLines = append(chatLines, contentStyle.Render("AI is thinking"+dots))
+	}
+
+	// Prompt & input
+	cursor := ""
+	if m.blink && !curtab.thinking {
+		cursor = "_"
+	}
+	displayInput := strings.ReplaceAll(curtab.input, "\n", "⏎\n")
+	wrappedInput := wrapText("> "+displayInput, innerWidth, "  ")
+	for i, line := range strings.Split(wrappedInput, "\n") {
+		if i == len(strings.Split(wrappedInput, "\n"))-1 && m.blink && !curtab.thinking {
+			line += cursor
+		}
+		chatLines = append(chatLines, contentStyle.Render(line))
+	}
+
+	chatContent := strings.Join(chatLines, "\n")
+	chatPane := border.Width(width).Height(height).Render(chatContent)
+
+	// Combine sidebar + chat
+	panel := chatPane
+	if m.showSidebar {
+		panel = lipgloss.JoinHorizontal(lipgloss.Top, sb, chatPane)
+	}
+
+	// Footer nav
+	nav := text.Faint(true).Align(lipgloss.Center).Width(m.width).
+		Render("q: Quit | T: New tab | gt: Next | gT:Prev | dd:Close | z:Sidebar | j/k:Nav | enter:Send | p:Paste | u:Clear")
+
+	return panel + "\n" + nav
 }
 
 func main() {

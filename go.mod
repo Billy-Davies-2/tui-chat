@@ -1,11 +1,10 @@
-module github.com/Billy-Davies-2/tui-demo
+module github.com/Billy-Davies-2/tui-chat
 
 go 1.24.0
 
 toolchain go1.24.2
 
 require (
-	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/bubbletea v1.3.5
 	github.com/charmbracelet/lipgloss v1.1.0
 )
