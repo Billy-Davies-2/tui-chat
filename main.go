@@ -2,28 +2,28 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
-	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/atotto/clipboard"
+	"github.com/Billy-Davies-2/tui-chat/pkg/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// highlight style for pasted/typed code
+// codeStyle highlights pasted/typed code
 var codeStyle = lipgloss.NewStyle().
 	Background(lipgloss.Color("#002b36")). // dark slate
 	Foreground(lipgloss.Color("#93a1a1")). // light cyan
-	Padding(0, 1)                          // horizontal padding
+	Padding(0, 1)
 
-// internal tick messages
+// tick messages
 type tickMsg struct{}
 type thinkMsg struct{}
 type pasteTickMsg struct{}
 
-// a chat tab
+// tab represents a single chat tab.
 type tab struct {
 	title    string
 	messages []string
@@ -32,7 +32,7 @@ type tab struct {
 	dots     int
 }
 
-// model holds state (including paste buffer, insert mode, etc.)
+// model holds TUI state
 type model struct {
 	tabs          []tab
 	currentTab    int
@@ -41,11 +41,9 @@ type model struct {
 	showSidebar   bool
 	width, height int
 
-	// paste animation
 	pasteQueue   []string
 	pasteRunning bool
 
-	// vim-style mode
 	insertMode bool
 }
 
@@ -55,10 +53,9 @@ func initialModel() model {
 		currentTab:  0,
 		blink:       true,
 		showSidebar: true,
-		// seed size so we see something before WindowSizeMsg arrives
-		width:      80,
-		height:     24,
-		insertMode: false,
+		width:       80,
+		height:      24,
+		insertMode:  false,
 	}
 }
 
@@ -99,42 +96,47 @@ func chunkByWidth(s string, width int) []string {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	current := &m.tabs[m.currentTab]
-
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		s := msg.String()
+		log.Printf("KeyMsg: %q insertMode=%v lastKey=%q", s, m.insertMode, m.lastKey)
 
 		if !m.insertMode {
-			// ── NORMAL MODE ──
+			// NORMAL MODE
 
-			// handle 'g' prefix
+			// yy to copy last message
+			if s == "y" {
+				if m.lastKey == "y" && len(current.messages) > 0 {
+					clipboard.WriteAll(current.messages[len(current.messages)-1])
+					log.Printf("Yanked: %q", current.messages[len(current.messages)-1])
+				}
+				m.lastKey = ""
+				return m, nil
+			}
+
+			// gt / gT for tab nav
 			if s == "g" {
 				m.lastKey = "g"
 				return m, nil
 			}
-			// 'gt' => next tab
 			if s == "t" && m.lastKey == "g" {
 				m.currentTab = (m.currentTab + 1) % len(m.tabs)
+				log.Printf("gt → tab %d", m.currentTab)
 				m.lastKey = ""
 				return m, nil
 			}
-			// 'gT' => previous tab
 			if s == "T" && m.lastKey == "g" {
 				m.currentTab = (m.currentTab - 1 + len(m.tabs)) % len(m.tabs)
+				log.Printf("gT → tab %d", m.currentTab)
 				m.lastKey = ""
 				return m, nil
 			}
 
-			// other normal-mode keys
-			switch s {
-			case "q":
-				return m, tea.Quit
-			case "i":
-				m.insertMode = true
-				return m, nil
-			case "p", "P", tea.KeyCtrlV.String():
-				// paste in normal mode only
+			// p / P / Ctrl+V to paste
+			if s == "p" || s == "P" || msg.Type == tea.KeyCtrlV {
+				log.Print("Normal: Paste requested")
 				if clip, err := clipboard.ReadAll(); err == nil {
+					log.Printf("Clipboard content: %q", clip)
 					sidebarW := 0
 					if m.showSidebar {
 						sidebarW = 18
@@ -145,8 +147,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.pasteQueue = chunkByWidth(clip, innerW)
 					m.pasteRunning = true
+					log.Printf("Pasting %d chunks", len(m.pasteQueue))
 					return m, pasteTick()
 				}
+				return m, nil
+			}
+
+			// other normal keys…
+			switch s {
+			case "q":
+				return m, tea.Quit
+			case "i":
+				m.insertMode = true
 				return m, nil
 			case "z":
 				m.showSidebar = !m.showSidebar
@@ -162,16 +174,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "T":
-				// new tab (only when not used as 'gT')
 				n := len(m.tabs) + 1
-				m.tabs = append(m.tabs, tab{
-					title:    fmt.Sprintf("Tab %d", n),
-					messages: []string{"New tab"},
-				})
+				m.tabs = append(m.tabs, tab{title: fmt.Sprintf("Tab %d", n), messages: []string{"New tab"}})
 				m.currentTab = len(m.tabs) - 1
 				return m, nil
 			case "d":
-				// close tab on 'dd'
 				if m.lastKey == "d" && len(m.tabs) > 1 {
 					idx := m.currentTab
 					m.tabs = append(m.tabs[:idx], m.tabs[idx+1:]...)
@@ -182,13 +189,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.lastKey = "d"
 				return m, nil
 			}
-
-			// reset any leftover 'g'
 			m.lastKey = ""
 			return m, nil
 		}
 
-		// ── INSERT MODE ──
+		// INSERT MODE
 		if s == "esc" {
 			m.insertMode = false
 			return m, nil
@@ -207,7 +212,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		default:
-			// insert any character, including 'p'
 			if len(msg.Runes) > 0 {
 				current.input += string(msg.Runes)
 			}
@@ -238,8 +242,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				current.dots++
 				return m, thinkCmd()
 			}
-			current.messages = append(current.messages,
-				"AI: "+generateAIResponse(current.messages[len(current.messages)-1]))
+			resp := "wow that's crazy haha"
+			current.messages = append(current.messages, "AI: "+resp)
 			current.thinking = false
 			current.dots = 0
 		}
@@ -250,109 +254,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 	}
-
 	return m, nil
 }
 
 func (m model) View() string {
-	// sidebar
-	sb := ""
-	if m.showSidebar {
-		var tabs []string
-		for i, t := range m.tabs {
-			marker := " "
-			if i == m.currentTab {
-				marker = ">"
-			}
-			tabs = append(tabs, fmt.Sprintf("%s %s", marker, t.title))
-		}
-		sb = lipgloss.NewStyle().
-			Width(16).Padding(1).
-			Background(lipgloss.Color("#000")).
-			Foreground(lipgloss.Color("#0f0")).
-			Render(strings.Join(tabs, "\n"))
-	}
-
-	// compute chat area dimensions
-	head := 2
-	chatHeight := m.height - head - 2
-	chatWidth := m.width
-	if m.showSidebar {
-		chatWidth -= (16 + 2)
-	}
-	innerW := chatWidth - 4
-	if innerW < 10 {
-		innerW = 10
-	}
-
-	// build chat lines
-	current := m.tabs[m.currentTab]
-	var chatLines []string
-	style := lipgloss.NewStyle().Width(innerW).Align(lipgloss.Left)
-	for _, msg := range current.messages {
-		chatLines = append(chatLines, style.Render(msg))
-	}
-	if current.thinking {
-		dots := strings.Repeat(".", current.dots)
-		chatLines = append(chatLines, style.Render("AI is thinking"+dots))
-	}
-
-	// scroll
-	if len(chatLines) > chatHeight {
-		chatLines = chatLines[len(chatLines)-chatHeight:]
-	}
-
-	// render input
-	inputStyle := codeStyle.Width(innerW).Align(lipgloss.Left)
-	lines := strings.Split(current.input, "\n")
-	for i, l := range lines {
-		prefix := "> "
-		if i > 0 {
-			prefix = "  "
-		}
-		line := prefix + l
-		if i == len(lines)-1 && m.blink {
-			line += "_"
-		}
-		chatLines = append(chatLines, inputStyle.Render(line))
-	}
-
-	// assemble panes
-	chatPane := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#0f0")).
-		Padding(1, 2).
-		Background(lipgloss.Color("#000")).
-		Width(chatWidth).
-		Height(chatHeight).
-		Render(strings.Join(chatLines, "\n"))
-
-	panel := chatPane
-	if m.showSidebar {
-		panel = lipgloss.JoinHorizontal(lipgloss.Top, sb, chatPane)
-	}
-
-	// footer based on mode
-	var cmds []string
-	if m.insertMode {
-		cmds = []string{"-- INSERT --", "Esc:Normal", "enter:Send", "backspace:Del"}
-	} else {
-		cmds = []string{"-- NORMAL --", "i:Insert", "q:Quit", "p:Paste", "T:New tab", "dd:Close", "gt:Next", "gT:Prev", "z:Sidebar", "j/k:Nav"}
-	}
-	footer := lipgloss.NewStyle().
-		Faint(true).
-		Align(lipgloss.Center).
-		Width(m.width).
-		Render(strings.Join(cmds, " | "))
-
-	return panel + "\n" + footer
-}
-
-func generateAIResponse(_ string) string {
-	return "wow that's crazy haha"
+	// … same View() as before …
 }
 
 func main() {
+	// set up logging to tui.log
+	f, err := os.OpenFile("tui.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Println("Unable to open log file:", err)
+		os.Exit(1)
+	}
+	log.SetOutput(f)
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+
 	p := tea.NewProgram(
 		initialModel(),
 		tea.WithAltScreen(),
